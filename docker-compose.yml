@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: polyetl_db
+    environment:
+      POSTGRES_USER: polyetl
+      POSTGRES_PASSWORD: polyetl
+      POSTGRES_DB: polyetl
+    ports:
+      - "5432:5432"
+    volumes:
+      - polyetl_pg_data:/var/lib/postgresql/data
+
+volumes:
+  polyetl_pg_data:
