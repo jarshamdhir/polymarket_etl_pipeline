@@ -3,7 +3,7 @@ from app.load.save_events import save_events
 
 def main():
     print("1. Extracting + cleaning events from API")
-    events = fetch_clean_events(limit=20)
+    events = fetch_clean_events(limit=100)
     print(f"     Got {len(events)} rows of data")
 
     print("2. Saving events to PostgreSQL")
