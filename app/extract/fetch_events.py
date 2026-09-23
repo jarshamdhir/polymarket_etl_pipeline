@@ -6,7 +6,7 @@ URL = "https://gamma-api.polymarket.com/events"
 
 def fetch_events(limit: int = 100, offset: int = 0) -> list:
     # Call polymarket gamma api to fetch events list
-    params = {"limit":limit,"active":"true","offset":offset}
+    params = {"limit":limit,"active":"true","closed":"false","offset":offset}
     response = httpx.get(URL, params=params,timeout=10)
     if response.status_code == 422:
         return []
@@ -40,3 +40,7 @@ def fetch_events_with_offset(limit: int = 100) -> list:
         time.sleep(1)
     print(f" Total events fetched: {len(all_events)}")
     return all_events
+if __name__ == "__main__":
+    events = fetch_events_with_offset(limit=1)
+    for event in events:
+        print(event.keys())
