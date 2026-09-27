@@ -17,5 +17,6 @@ __pycache__/
 .env
 data/raw/
 *.csv
+!csv/events.csv
 *.parquet
 .DS_Store

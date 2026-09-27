@@ -1,3 +1,5 @@
+import shutil
+import tempfile
 from pathlib import Path
 from datetime import date
 
@@ -9,7 +11,12 @@ from plotly.subplots import make_subplots
 # ---------- paths ----------
 DATA_CSV = Path("csv/events.csv")
 OUT_DIR = Path("dashboard/linkedin")
+DOCS_DIR = Path("docs")
+DOCS_CHARTS = DOCS_DIR / "charts"
+DOCS_ASSETS = DOCS_DIR / "assets"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
+DOCS_CHARTS.mkdir(parents=True, exist_ok=True)
+DOCS_ASSETS.mkdir(parents=True, exist_ok=True)
 
 # ---------- design system (colorblind-safe, publication-style) ----------
 BG = "#F7F9FC"
@@ -197,13 +204,241 @@ def style_cartesian_axes(fig: go.Figure, y_category: bool = False) -> None:
 
 def save(fig: go.Figure, name: str, **theme_kw) -> None:
     apply_theme(fig, **theme_kw)
-    html_path = OUT_DIR / f"{name}.html"
-    png_path = OUT_DIR / f"{name}.png"
-    fig.write_html(str(html_path))
     h = theme_kw.get("height", 760)
     w = theme_kw.get("width", 1280)
-    fig.write_image(str(png_path), width=w, height=h, scale=2)
+    for html_dir in (OUT_DIR, DOCS_CHARTS):
+        fig.write_html(str(html_dir / f"{name}.html"), include_plotlyjs="cdn")
+    png_path = OUT_DIR / f"{name}.png"
+    asset_png = DOCS_ASSETS / f"{name}.png"
+    try:
+        fig.write_image(str(png_path), width=w, height=h, scale=2)
+    except OSError:
+        # Kaleido on Windows can fail writing directly to some paths (file lock / path quirks).
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        fig.write_image(str(tmp_path), width=w, height=h, scale=2)
+        shutil.copy2(tmp_path, png_path)
+        tmp_path.unlink(missing_ok=True)
+    shutil.copy2(png_path, asset_png)
     print(f"Saved {png_path}")
+
+
+def build_github_pages_index(summary: dict) -> None:
+    """Single-page dashboard for GitHub Pages (embeds all interactive charts)."""
+    charts = [
+        (
+            "00_linkedin_hero_dashboard",
+            "Executive overview",
+            "KPIs plus event volume, liquidity scatter, and category mix.",
+            1020,
+        ),
+        (
+            "01_events_by_category",
+            "Event catalog depth",
+            "Active event counts and share of catalog by category.",
+            820,
+        ),
+        (
+            "02_volume_by_category",
+            "Volume concentration",
+            "Lifetime trading volume and share of total (log scale).",
+            820,
+        ),
+        (
+            "03_volume_scatter_bubble",
+            "Liquidity vs volume",
+            "Log–log view with bubble size proportional to event count.",
+            820,
+        ),
+        (
+            "04_top10_events",
+            "Top categories by volume",
+            "Ranked volume with event-count comparison.",
+            820,
+        ),
+    ]
+
+    sections = "\n".join(
+        f"""
+        <section class="panel" id="{slug}">
+          <div class="panel-head">
+            <h2>{title}</h2>
+            <p>{desc}</p>
+            <a class="open-chart" href="charts/{slug}.html" target="_blank" rel="noopener">Open full screen</a>
+          </div>
+          <iframe
+            class="chart-frame"
+            title="{title}"
+            src="charts/{slug}.html"
+            loading="lazy"
+            height="{height}"
+          ></iframe>
+        </section>"""
+        for slug, title, desc, height in charts
+    )
+
+    index_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PolyETL · Polymarket analytics dashboard</title>
+  <meta name="description" content="Interactive Polymarket category analytics built with the PolyETL pipeline." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
+  <style>
+    :root {{
+      --bg: #f0f4f8;
+      --card: #ffffff;
+      --text: #1a202c;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --border: #e2e8f0;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: Inter, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #eef2ff 0%, var(--bg) 220px, var(--bg) 100%);
+      color: var(--text);
+      line-height: 1.5;
+    }}
+    .wrap {{ max-width: 1320px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }}
+    header.hero {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem 2rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1.5rem;
+    }}
+    header.hero h1 {{ margin: 0 0 0.35rem; font-size: clamp(1.5rem, 3vw, 2rem); }}
+    header.hero p {{ margin: 0; color: var(--muted); max-width: 62ch; }}
+    .badges {{ margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }}
+    .badge {{
+      font-size: 0.8rem;
+      padding: 0.35rem 0.65rem;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1e40af;
+      border: 1px solid #bfdbfe;
+    }}
+    .kpi-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }}
+    .kpi {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.1rem;
+      box-shadow: var(--shadow);
+    }}
+    .kpi label {{ display: block; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }}
+    .kpi strong {{ display: block; margin-top: 0.25rem; font-size: 1.35rem; }}
+    nav.toc {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+    }}
+    nav.toc a {{
+      text-decoration: none;
+      color: var(--accent);
+      font-size: 0.9rem;
+      padding: 0.4rem 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--card);
+    }}
+    nav.toc a:hover {{ background: #eff6ff; }}
+    .panel {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1rem 1rem 0.5rem;
+      margin-bottom: 1.25rem;
+      box-shadow: var(--shadow);
+    }}
+    .panel-head {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 0.5rem 1rem;
+      padding: 0.25rem 0.75rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }}
+    .panel-head h2 {{ margin: 0; font-size: 1.15rem; flex: 1 1 220px; }}
+    .panel-head p {{ margin: 0; flex: 1 1 100%; color: var(--muted); font-size: 0.92rem; }}
+    .open-chart {{
+      font-size: 0.85rem;
+      color: var(--accent);
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    .open-chart:hover {{ text-decoration: underline; }}
+    .chart-frame {{
+      width: 100%;
+      border: 0;
+      display: block;
+      background: #fff;
+    }}
+    footer {{
+      margin-top: 2rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }}
+    footer a {{ color: var(--accent); }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>PolyETL · Polymarket category intelligence</h1>
+      <p>
+        End-to-end analytics from the PolyETL pipeline: extract from Polymarket Gamma API,
+        transform in Python, and visualize category-level trading activity. Data as of {REPORT_DATE}.
+      </p>
+      <div class="badges">
+        <span class="badge">Python · Pandas · Plotly</span>
+        <span class="badge">PostgreSQL · Docker</span>
+        <span class="badge">Portfolio dashboard</span>
+      </div>
+    </header>
+
+    <div class="kpi-grid">
+      <div class="kpi"><label>Categories</label><strong>{summary["categories"]}</strong></div>
+      <div class="kpi"><label>Active events</label><strong>{fmt_int(summary["events"])}</strong></div>
+      <div class="kpi"><label>Total volume</label><strong>{fmt_usd(summary["volume"], 2)}</strong></div>
+      <div class="kpi"><label>Aggregate liquidity</label><strong>{fmt_usd(summary["liquidity"], 2)}</strong></div>
+      <div class="kpi"><label>Top category</label><strong>{summary["top_cat"]}</strong></div>
+      <div class="kpi"><label>Top category share</label><strong>{fmt_pct(summary["top_vol_share"])}</strong></div>
+    </div>
+
+    <nav class="toc" aria-label="Chart sections">
+      <a href="#00_linkedin_hero_dashboard">Overview</a>
+      <a href="#01_events_by_category">Events</a>
+      <a href="#02_volume_by_category">Volume</a>
+      <a href="#03_volume_scatter_bubble">Liquidity scatter</a>
+      <a href="#04_top10_events">Top 10</a>
+    </nav>
+
+    {sections}
+
+    <footer>
+      {FOOTNOTE} ·
+      <a href="https://github.com/jarshamdhir/polymarket_etl_pipeline">View source on GitHub</a>
+    </footer>
+  </div>
+</body>
+</html>
+"""
+    (DOCS_DIR / ".nojekyll").touch()
+    (DOCS_DIR / "index.html").write_text(index_html, encoding="utf-8")
+    print(f"Saved {DOCS_DIR / 'index.html'}")
 
 
 def build_summary(frame: pd.DataFrame) -> dict:
@@ -729,9 +964,24 @@ apply_theme(
     show_legend=False,
 )
 
-png_hero = OUT_DIR / "00_linkedin_hero_dashboard.png"
-fig5.write_html(str(OUT_DIR / "00_linkedin_hero_dashboard.html"))
-fig5.write_image(str(png_hero), width=1280, height=980, scale=2)
+hero_name = "00_linkedin_hero_dashboard"
+png_hero = OUT_DIR / f"{hero_name}.png"
+for html_dir in (OUT_DIR, DOCS_CHARTS):
+    fig5.write_html(str(html_dir / f"{hero_name}.html"), include_plotlyjs="cdn")
+try:
+    fig5.write_image(str(png_hero), width=1280, height=980, scale=2)
+except OSError:
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    fig5.write_image(str(tmp_path), width=1280, height=980, scale=2)
+    shutil.copy2(tmp_path, png_hero)
+    tmp_path.unlink(missing_ok=True)
+shutil.copy2(png_hero, DOCS_ASSETS / f"{hero_name}.png")
 print(f"Saved {png_hero}")
 
-print("\nDone! Use PNG files in dashboard/linkedin/ for LinkedIn.")
+build_github_pages_index(summary)
+
+print("\nDone!")
+print(f"  LinkedIn PNGs: {OUT_DIR}/")
+print(f"  GitHub Pages:  {DOCS_DIR}/index.html")
+print("  Live URL:      https://jarshamdhir.github.io/polymarket_etl_pipeline/")
