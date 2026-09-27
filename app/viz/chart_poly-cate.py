@@ -186,11 +186,30 @@ def log_usd_axis(fig: go.Figure, axis: str = "x", row: int | None = None, col: i
         fig.update_yaxes(**kwargs)
 
 
+def smooth_bar_marker(color=None, colors=None) -> dict:
+    base = dict(opacity=0.9, line=dict(width=0.6, color="rgba(255,255,255,0.9)"))
+    if colors is not None:
+        base["color"] = colors
+    elif color is not None:
+        base["color"] = color
+    return base
+
+
+def smooth_scatter_marker(size: float, color: str) -> dict:
+    return dict(
+        size=size,
+        color=color,
+        opacity=0.82,
+        line=dict(width=2, color="rgba(255,255,255,0.95)"),
+    )
+
+
 def style_cartesian_axes(fig: go.Figure, y_category: bool = False) -> None:
     axis_common = dict(
         showgrid=True,
         gridcolor=GRID,
-        gridwidth=1,
+        gridwidth=0.8,
+        griddash="dot",
         zeroline=False,
         linecolor=GRID,
         tickfont=dict(color=TEXT),
@@ -200,6 +219,247 @@ def style_cartesian_axes(fig: go.Figure, y_category: bool = False) -> None:
     fig.update_yaxes(**axis_common)
     if y_category:
         fig.update_yaxes(categoryorder="total ascending", automargin=True)
+
+
+def compute_insights(frame: pd.DataFrame, summary: dict) -> list[str]:
+    total_vol = summary["volume"]
+    total_ev = summary["events"]
+    ranked = frame.sort_values("total_volume", ascending=False).copy()
+    ranked["vol_share"] = ranked["total_volume"] / total_vol * 100
+    ranked["ev_share"] = ranked["events"] / total_ev * 100
+    ranked["vol_per_event"] = ranked["total_volume"] / ranked["events"].replace(0, pd.NA)
+
+    top3 = ranked.head(3)
+    top3_vol = top3["total_volume"].sum() / total_vol * 100
+    top3_names = ", ".join(top3["category"].tolist())
+
+    by_events = ranked.sort_values("events", ascending=False).iloc[0]
+    by_volume = ranked.iloc[0]
+    capital = ranked.sort_values("vol_per_event", ascending=False).iloc[0]
+    thin = ranked[ranked["events"] >= 50].sort_values("vol_per_event").iloc[0]
+
+    return [
+        f"Volume is concentrated: top 3 categories ({top3_names}) = {top3_vol:.0f}% of ${total_vol / 1e9:.2f}B traded.",
+        f"Catalog leader {by_events['category']} ({by_events['events']:,} events, {by_events['ev_share']:.0f}% of listings) "
+        f"≠ volume leader {by_volume['category']} ({by_volume['vol_share']:.0f}% of volume).",
+        f"Highest capital intensity: {capital['category']} ({fmt_usd(capital['vol_per_event'], 0)} avg volume per event). "
+        f"Long tail: {thin['category']} ({thin['events']:,} events, {fmt_usd(thin['vol_per_event'], 0)} per event).",
+    ]
+
+
+def build_hero_dashboard(
+    cat_all: pd.DataFrame,
+    summary: dict,
+    colors: dict[str, str],
+    is_aggregated: bool,
+) -> go.Figure:
+    """Executive view: mismatch (events vs volume), liquidity map, capital per event."""
+    insights = compute_insights(cat_all, summary)
+    insight_html = "<br>".join(f"• {line}" for line in insights)
+
+    fig = make_subplots(
+        rows=2,
+        cols=2,
+        row_heights=[0.48, 0.52],
+        specs=[
+            [{"colspan": 2, "type": "xy"}, None],
+            [{"type": "xy"}, {"type": "xy"}],
+        ],
+        subplot_titles=(
+            "Catalog share vs trading volume share (top 8 categories)",
+            "Liquidity vs volume — bubble size = events",
+            "Capital intensity (avg volume per active event)",
+        ),
+        vertical_spacing=0.14,
+        horizontal_spacing=0.1,
+    )
+
+    focus = cat_all.nlargest(8, "total_volume").copy()
+    focus["ev_share"] = focus["events"] / summary["events"] * 100
+    focus["vol_share"] = focus["total_volume"] / summary["volume"] * 100
+    focus = focus.sort_values("vol_share", ascending=False)
+
+    fig.add_trace(
+        go.Bar(
+            name="Share of active events",
+            x=focus["category"],
+            y=focus["ev_share"],
+            marker=smooth_bar_marker(color="#93C5FD"),
+            text=[f"{v:.1f}%" for v in focus["ev_share"]],
+            textposition="outside",
+            textfont=dict(size=10, color=MUTED),
+            hovertemplate="<b>%{x}</b><br>Events share: %{y:.1f}%<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+    fig.add_trace(
+        go.Bar(
+            name="Share of trading volume",
+            x=focus["category"],
+            y=focus["vol_share"],
+            marker=smooth_bar_marker(color="#1D4ED8"),
+            text=[f"{v:.1f}%" for v in focus["vol_share"]],
+            textposition="outside",
+            textfont=dict(size=10, color=TEXT),
+            hovertemplate="<b>%{x}</b><br>Volume share: %{y:.1f}%<extra></extra>",
+        ),
+        row=1,
+        col=1,
+    )
+
+    scatter_df = focus.copy()
+    med_liq = scatter_df["liquidity"].replace(0, pd.NA).median()
+    med_vol = scatter_df["total_volume"].replace(0, pd.NA).median()
+    for _, row in scatter_df.iterrows():
+        size = max(14, min(56, row["events"] ** 0.55 * 3.2))
+        fig.add_trace(
+            go.Scatter(
+                x=[max(row["liquidity"], 1)],
+                y=[max(row["total_volume"], 1)],
+                mode="markers",
+                name=row["category"],
+                marker=smooth_scatter_marker(size, colors.get(row["category"], ACCENT)),
+                showlegend=False,
+                hovertemplate=(
+                    f"<b>{row['category']}</b><br>"
+                    f"Liquidity: {fmt_usd(row['liquidity'])}<br>"
+                    f"Volume: {fmt_usd(row['total_volume'])}<br>"
+                    f"Events: {row['events']:,}<extra></extra>"
+                ),
+            ),
+            row=2,
+            col=1,
+        )
+
+    if med_liq and med_vol:
+        fig.add_hline(
+            y=max(med_vol, 1),
+            line=dict(color="#CBD5E1", width=1, dash="dot"),
+            row=2,
+            col=1,
+        )
+        fig.add_vline(
+            x=max(med_liq, 1),
+            line=dict(color="#CBD5E1", width=1, dash="dot"),
+            row=2,
+            col=1,
+        )
+
+    for _, row in scatter_df.nlargest(4, "total_volume").iterrows():
+        fig.add_annotation(
+            x=max(row["liquidity"], 1),
+            y=max(row["total_volume"], 1),
+            xref="x2",
+            yref="y2",
+            text=row["category"],
+            showarrow=True,
+            arrowhead=2,
+            arrowsize=0.65,
+            arrowwidth=1,
+            arrowcolor=MUTED,
+            ax=24,
+            ay=-22,
+            font=dict(size=10, color=TEXT),
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor=GRID,
+            borderwidth=1,
+        )
+
+    intensity = cat_all.nlargest(10, "total_volume").copy()
+    intensity["vol_per_event"] = intensity["total_volume"] / intensity["events"].replace(0, pd.NA)
+    intensity = intensity.sort_values("vol_per_event", ascending=True)
+
+    fig.add_trace(
+        go.Bar(
+            y=intensity["category"],
+            x=intensity["vol_per_event"],
+            orientation="h",
+            marker=smooth_bar_marker(
+                colors=[colors.get(c, ACCENT) for c in intensity["category"]],
+            ),
+            text=[fmt_usd(v, 0) for v in intensity["vol_per_event"]],
+            textposition="outside",
+            textfont=dict(size=10, color=TEXT),
+            showlegend=False,
+            hovertemplate=(
+                "<b>%{y}</b><br>Avg volume / event: %{customdata[0]}<br>"
+                "Events: %{customdata[1]:,}<br>Total volume: %{customdata[2]}<extra></extra>"
+            ),
+            customdata=list(
+                zip(
+                    [fmt_usd(v, 0) for v in intensity["vol_per_event"]],
+                    intensity["events"],
+                    [fmt_usd(v) for v in intensity["total_volume"]],
+                )
+            ),
+        ),
+        row=2,
+        col=2,
+    )
+
+    fig.update_layout(barmode="group", bargap=0.22, bargroupgap=0.08)
+    fig.update_xaxes(tickangle=-28, row=1, col=1, title_text="Category")
+    fig.update_yaxes(row=1, col=1, title_text="Share of platform (%)", ticksuffix="%")
+    fig.update_xaxes(row=2, col=1, title_text="Liquidity (USD, log)")
+    fig.update_yaxes(row=2, col=1, title_text="Trading volume (USD, log)")
+    log_usd_axis(fig, "x", row=2, col=1)
+    log_usd_axis(fig, "y", row=2, col=1)
+    fig.update_xaxes(row=2, col=2, title_text="Average volume per event (USD)")
+    fig.update_yaxes(row=2, col=2, title_text="")
+    style_cartesian_axes(fig, y_category=True)
+
+    for ann in fig.layout.annotations:
+        if ann.text in (
+            "Catalog share vs trading volume share (top 8 categories)",
+            "Liquidity vs volume — bubble size = events",
+            "Capital intensity (avg volume per active event)",
+        ):
+            ann.font = dict(size=12, color=MUTED)
+            ann.xanchor = "left"
+
+    apply_theme(
+        fig,
+        title="PolyETL · Executive market structure summary",
+        subtitle=(
+            f"{summary['categories']} categories · {fmt_int(summary['events'])} active events · "
+            f"{fmt_usd(summary['volume'], 2)} total volume · {REPORT_DATE}"
+        ),
+        height=1120,
+        width=1280,
+        margin=dict(l=78, r=48, t=248, b=80),
+        show_legend=True,
+        legend_title="Metric",
+    )
+    fig.update_layout(
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=0.94,
+            x=0.5,
+            xanchor="center",
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=GRID,
+            borderwidth=1,
+        ),
+    )
+    fig.add_annotation(
+        text=f"<b>Key insights</b><br>{insight_html}",
+        xref="paper",
+        yref="paper",
+        x=0,
+        y=0.995,
+        xanchor="left",
+        yanchor="top",
+        showarrow=False,
+        align="left",
+        font=dict(size=11, color=TEXT),
+        bgcolor="rgba(255,255,255,0.96)",
+        bordercolor=GRID,
+        borderwidth=1,
+        borderpad=10,
+    )
+    return fig
 
 
 def save(fig: go.Figure, name: str, **theme_kw) -> None:
@@ -229,8 +489,8 @@ def build_github_pages_index(summary: dict) -> None:
         (
             "00_linkedin_hero_dashboard",
             "Executive overview",
-            "KPIs plus event volume, liquidity scatter, and category mix.",
-            1020,
+            "Event vs volume share, liquidity map, capital intensity, and key insights.",
+            1180,
         ),
         (
             "01_events_by_category",
@@ -461,7 +721,6 @@ def build_summary(frame: pd.DataFrame) -> dict:
 if is_aggregated:
     cat_all = df.copy()
     cat = rollup_categories(cat_all, top_n=12)
-    colors = category_colors(cat["category"].tolist())
     summary = build_summary(cat_all)
 else:
     cat_all = (
@@ -474,8 +733,8 @@ else:
         )
     )
     cat = rollup_categories(cat_all, top_n=12)
-    colors = category_colors(cat["category"].tolist())
     summary = build_summary(cat_all)
+colors = category_colors(cat_all.sort_values("total_volume", ascending=False)["category"].tolist())
 
 subtitle_base = (
     f"Active Polymarket events · {fmt_int(summary['events'])} events · "
@@ -490,10 +749,7 @@ fig1.add_trace(
         y=cat_ev["category"],
         x=cat_ev["events"],
         orientation="h",
-        marker=dict(
-            color=[colors[c] for c in cat_ev["category"]],
-            line=dict(color=PLOT_BG, width=1),
-        ),
+        marker=smooth_bar_marker(colors=[colors.get(c, ACCENT) for c in cat_ev["category"]]),
         text=[
             f"{fmt_int(r.events)} events · {fmt_pct(r.events_share_pct)} of catalog"
             for r in cat_ev.itertuples()
@@ -547,7 +803,7 @@ fig2.add_trace(
                 len=0.75,
                 thickness=14,
             ),
-            line=dict(color=PLOT_BG, width=1),
+            line=dict(color="rgba(255,255,255,0.9)", width=0.6),
         ),
         text=[fmt_usd(v) for v in cat_vol["total_volume"]],
         textposition="outside",
@@ -615,12 +871,7 @@ for _, row in scatter.iterrows():
             y=[max(row[y_col], 1)],
             mode="markers",
             name=str(cat_name),
-            marker=dict(
-                size=size,
-                color=color,
-                opacity=0.88,
-                line=dict(width=1.5, color=PLOT_BG),
-            ),
+            marker=smooth_scatter_marker(size, color),
             hovertemplate=(
                 f"<b>{row['label']}</b><br>"
                 f"{x_label}: %{{x:,.0f}}<br>"
@@ -707,7 +958,7 @@ if is_aggregated:
             x=top10["total_volume"],
             orientation="h",
             name="Total volume",
-            marker=dict(color=ACCENT, opacity=0.85),
+            marker=smooth_bar_marker(color=ACCENT),
             text=top10["bar_label"],
             textposition="outside",
             textfont=dict(size=11),
@@ -758,222 +1009,19 @@ save(
     margin=dict(l=160, r=160, t=110, b=88),
 )
 
-# ---------- Chart 5: Executive dashboard (KPIs + 2×2) ----------
-fig5 = make_subplots(
-    rows=3,
-    cols=2,
-    row_heights=[0.22, 0.39, 0.39],
-    column_widths=[0.58, 0.42],
-    specs=[
-        [{"type": "indicator"}, {"type": "indicator"}],
-        [{"type": "bar"}, {"type": "bar"}],
-        [{"type": "scatter"}, {"type": "pie"}],
-    ],
-    subplot_titles=(
-        "",
-        "",
-        "Event count by category (top 10)",
-        "Volume share (top 10)",
-        "Liquidity vs volume (log–log)",
-        "Event distribution (donut)",
-    ),
-    vertical_spacing=0.11,
-    horizontal_spacing=0.12,
-)
-
-fig5.add_trace(
-    go.Indicator(
-        mode="number+delta",
-        value=summary["events"],
-        number=dict(font=dict(size=36, color=TEXT), valueformat=",", suffix=" events"),
-        title=dict(text="Active events", font=dict(size=14, color=MUTED)),
-        domain={"x": [0, 1], "y": [0, 1]},
-    ),
-    row=1,
-    col=1,
-)
-_vol = summary["volume"]
-if _vol >= 1e9:
-    _vol_display, _vol_suffix = _vol / 1e9, "B"
-elif _vol >= 1e6:
-    _vol_display, _vol_suffix = _vol / 1e6, "M"
-elif _vol >= 1e3:
-    _vol_display, _vol_suffix = _vol / 1e3, "K"
-else:
-    _vol_display, _vol_suffix = _vol, ""
-fig5.add_trace(
-    go.Indicator(
-        mode="number",
-        value=_vol_display,
-        number=dict(
-            prefix="$",
-            suffix=_vol_suffix,
-            font=dict(size=34, color=TEXT),
-            valueformat=",.2f",
-        ),
-        title=dict(text="Total trading volume (USD)", font=dict(size=14, color=MUTED)),
-    ),
-    row=1,
-    col=2,
-)
-
-hero = rollup_categories(cat_all, top_n=10).sort_values("events", ascending=False)
-hero_vol = hero.sort_values("total_volume", ascending=True)
-
-fig5.add_trace(
-    go.Bar(
-        x=hero["category"],
-        y=hero["events"],
-        marker=dict(color=[colors.get(c, ACCENT) for c in hero["category"]]),
-        text=[fmt_int(e) for e in hero["events"]],
-        textposition="outside",
-        textfont=dict(size=10),
-        showlegend=False,
-        hovertemplate="<b>%{x}</b><br>Events: %{y:,}<extra></extra>",
-    ),
-    row=2,
-    col=1,
-)
-fig5.add_trace(
-    go.Bar(
-        y=hero_vol["category"],
-        x=hero_vol["total_volume"],
-        orientation="h",
-        marker=dict(
-            color=[colors.get(c, ACCENT) for c in hero_vol["category"]],
-            line=dict(color=PLOT_BG, width=1),
-        ),
-        text=[fmt_usd(v) for v in hero_vol["total_volume"]],
-        textposition="inside",
-        insidetextanchor="middle",
-        textfont=dict(size=10, color="white"),
-        showlegend=False,
-        hovertemplate="<b>%{y}</b><br>Volume: %{customdata[0]}<extra></extra>",
-        customdata=[fmt_usd(v) for v in hero_vol["total_volume"]],
-    ),
-    row=2,
-    col=2,
-)
-
-if is_aggregated:
-    for _, row in hero.iterrows():
-        fig5.add_trace(
-            go.Scatter(
-                x=[max(row["liquidity"], 1)],
-                y=[max(row["total_volume"], 1)],
-                mode="markers",
-                marker=dict(
-                    size=max(10, row["events"] ** 0.5 * 2.2),
-                    color=colors.get(row["category"], ACCENT),
-                    line=dict(width=1, color=PLOT_BG),
-                ),
-                name=str(row["category"]),
-                showlegend=False,
-                hovertemplate=(
-                    f"<b>{row['category']}</b><br>"
-                    f"Liquidity: {fmt_usd(row['liquidity'])}<br>"
-                    f"Volume: {fmt_usd(row['total_volume'])}<br>"
-                    f"Events: {row['events']:,}<extra></extra>"
-                ),
-            ),
-            row=3,
-            col=1,
-        )
-    fig5.add_trace(
-        go.Pie(
-            labels=hero["category"],
-            values=hero["events"],
-            hole=0.52,
-            sort=False,
-            direction="clockwise",
-            marker=dict(colors=[colors.get(c, ACCENT) for c in hero["category"]], line=dict(color=PLOT_BG, width=2)),
-            textinfo="label+percent",
-            textposition="outside",
-            textfont=dict(size=9),
-            hovertemplate="<b>%{label}</b><br>Events: %{value:,}<br>Share: %{percent}<extra></extra>",
-            showlegend=False,
-        ),
-        row=3,
-        col=2,
-    )
-    for _, row in hero.nlargest(5, "total_volume").iterrows():
-        fig5.add_annotation(
-            x=max(row["liquidity"], 1),
-            y=max(row["total_volume"], 1),
-            xref="x5",
-            yref="y5",
-            text=row["category"],
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=0.7,
-            arrowwidth=1,
-            arrowcolor=MUTED,
-            ax=22,
-            ay=-20,
-            font=dict(size=9, color=TEXT),
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor=GRID,
-            borderwidth=1,
-        )
-else:
-    fig5.add_trace(
-        go.Scatter(
-            x=scatter["volume_24hr"].clip(lower=1),
-            y=scatter["volume"].clip(lower=1),
-            mode="markers",
-            marker=dict(size=8, color=ACCENT, opacity=0.65),
-            showlegend=False,
-        ),
-        row=3,
-        col=1,
-    )
-    closed = df["is_closed"].value_counts()
-    fig5.add_trace(
-        go.Pie(
-            labels=["Open", "Closed"],
-            values=[closed.get(False, 0), closed.get(True, 0)],
-            hole=0.55,
-            marker=dict(colors=["#059669", "#94A3B8"]),
-            showlegend=False,
-        ),
-        row=3,
-        col=2,
-    )
-
-fig5.update_xaxes(row=3, col=1, title_text="Liquidity (USD, log)")
-fig5.update_yaxes(row=3, col=1, title_text="Volume (USD, log)")
-log_usd_axis(fig5, "x", row=3, col=1)
-log_usd_axis(fig5, "y", row=3, col=1)
-fig5.update_xaxes(tickangle=-35, row=2, col=1, title_text="Category")
-fig5.update_yaxes(row=2, col=1, title_text="Events (count)")
-fig5.update_xaxes(row=2, col=2, title_text="Volume (USD, log)")
-log_usd_axis(fig5, "x", row=2, col=2)
-
-for ann in fig5.layout.annotations:
-    if ann.text and ann.text not in ("", " "):
-        ann.font = dict(size=13, color=MUTED)
-        ann.xanchor = "left"
-
-apply_theme(
-    fig5,
-    title="PolyETL · Polymarket category intelligence",
-    subtitle=f"{summary['categories']} categories · {fmt_usd(summary['liquidity'])} aggregate liquidity · {REPORT_DATE}",
-    height=980,
-    width=1280,
-    margin=dict(l=72, r=56, t=118, b=64),
-    show_legend=False,
-)
+# ---------- Chart 5: Executive dashboard (insight-led) ----------
+fig5 = build_hero_dashboard(cat_all, summary, colors, is_aggregated)
 
 hero_name = "00_linkedin_hero_dashboard"
 png_hero = OUT_DIR / f"{hero_name}.png"
 for html_dir in (OUT_DIR, DOCS_CHARTS):
     fig5.write_html(str(html_dir / f"{hero_name}.html"), include_plotlyjs="cdn")
 try:
-    fig5.write_image(str(png_hero), width=1280, height=980, scale=2)
+    fig5.write_image(str(png_hero), width=1280, height=1080, scale=2)
 except OSError:
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
         tmp_path = Path(tmp.name)
-    fig5.write_image(str(tmp_path), width=1280, height=980, scale=2)
+    fig5.write_image(str(tmp_path), width=1280, height=1080, scale=2)
     shutil.copy2(tmp_path, png_hero)
     tmp_path.unlink(missing_ok=True)
 shutil.copy2(png_hero, DOCS_ASSETS / f"{hero_name}.png")
