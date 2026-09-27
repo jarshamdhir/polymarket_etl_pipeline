@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>PolyETL · Polymarket analytics dashboard</title>
   <meta name="description" content="Interactive Polymarket category analytics built with the PolyETL pipeline." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
@@ -105,7 +106,18 @@
       border: 0;
       display: block;
       background: #fff;
+      overflow: hidden;
     }
+    .cache-note {
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 0 0 1rem;
+      padding: 0.65rem 0.9rem;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+    }
+    .cache-note a { color: var(--accent); }
     footer {
       margin-top: 2rem;
       text-align: center;
@@ -139,6 +151,13 @@
       <div class="kpi"><label>Top category share</label><strong>36.3%</strong></div>
     </div>
 
+    <p class="cache-note">
+      Dashboard build <strong>202609262333</strong>.
+      If charts look stacked or show an old donut layout, hard-refresh
+      (<kbd>Ctrl+Shift+R</kbd>) or open the
+      <a href="charts/00_linkedin_hero_dashboard.html?v=202609262333">executive chart directly</a>.
+    </p>
+
     <nav class="toc" aria-label="Chart sections">
       <a href="#00_linkedin_hero_dashboard">Overview</a>
       <a href="#01_events_by_category">Events</a>
@@ -152,13 +171,14 @@
           <div class="panel-head">
             <h2>Executive overview</h2>
             <p>Event vs volume share, liquidity map, capital intensity, and key insights.</p>
-            <a class="open-chart" href="charts/00_linkedin_hero_dashboard.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/00_linkedin_hero_dashboard.html?v=202609262333" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="Executive overview"
-            src="charts/00_linkedin_hero_dashboard.html"
+            src="charts/00_linkedin_hero_dashboard.html?v=202609262333"
             loading="lazy"
+            scrolling="no"
             height="1180"
           ></iframe>
         </section>
@@ -167,13 +187,14 @@
           <div class="panel-head">
             <h2>Event catalog depth</h2>
             <p>Active event counts and share of catalog by category.</p>
-            <a class="open-chart" href="charts/01_events_by_category.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/01_events_by_category.html?v=202609262333" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="Event catalog depth"
-            src="charts/01_events_by_category.html"
+            src="charts/01_events_by_category.html?v=202609262333"
             loading="lazy"
+            scrolling="no"
             height="820"
           ></iframe>
         </section>
@@ -182,13 +203,14 @@
           <div class="panel-head">
             <h2>Volume concentration</h2>
             <p>Lifetime trading volume and share of total (log scale).</p>
-            <a class="open-chart" href="charts/02_volume_by_category.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/02_volume_by_category.html?v=202609262333" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="Volume concentration"
-            src="charts/02_volume_by_category.html"
+            src="charts/02_volume_by_category.html?v=202609262333"
             loading="lazy"
+            scrolling="no"
             height="820"
           ></iframe>
         </section>
@@ -197,13 +219,14 @@
           <div class="panel-head">
             <h2>Liquidity vs volume</h2>
             <p>Log–log view with bubble size proportional to event count.</p>
-            <a class="open-chart" href="charts/03_volume_scatter_bubble.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/03_volume_scatter_bubble.html?v=202609262333" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="Liquidity vs volume"
-            src="charts/03_volume_scatter_bubble.html"
+            src="charts/03_volume_scatter_bubble.html?v=202609262333"
             loading="lazy"
+            scrolling="no"
             height="820"
           ></iframe>
         </section>
@@ -212,13 +235,14 @@
           <div class="panel-head">
             <h2>Top categories by volume</h2>
             <p>Ranked volume with event-count comparison.</p>
-            <a class="open-chart" href="charts/04_top10_events.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/04_top10_events.html?v=202609262333" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="Top categories by volume"
-            src="charts/04_top10_events.html"
+            src="charts/04_top10_events.html?v=202609262333"
             loading="lazy"
+            scrolling="no"
             height="820"
           ></iframe>
         </section>

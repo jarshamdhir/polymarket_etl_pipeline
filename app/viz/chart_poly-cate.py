@@ -1,7 +1,8 @@
+import re
 import shutil
 import tempfile
 from pathlib import Path
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import plotly.express as px
@@ -42,6 +43,8 @@ PALETTE = [
 FONT = "Inter, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
 FOOTNOTE = "Source: Polymarket (Gamma API) · aggregated by category · PolyETL pipeline"
 REPORT_DATE = date.today().strftime("%Y-%m-%d")
+# Bump when chart HTML changes so browsers/CDNs fetch fresh assets (GitHub Pages + custom domain).
+SITE_VERSION = datetime.now().strftime("%Y%m%d%H%M")
 
 # ---------- load & clean ----------
 df = pd.read_csv(DATA_CSV)
@@ -462,12 +465,47 @@ def build_hero_dashboard(
     return fig
 
 
+def export_plotly_html(fig: go.Figure, path: Path) -> None:
+    """Iframe-safe Plotly HTML (fixed height, no responsive reflow)."""
+    fig.update_layout(autosize=False)
+    height = int(fig.layout.height or 760)
+    width = int(fig.layout.width or 1280)
+    fig.write_html(
+        str(path),
+        include_plotlyjs="cdn",
+        config={"responsive": False, "displayModeBar": True},
+    )
+    html = path.read_text(encoding="utf-8")
+    html = html.replace(
+        'style="height:100%; width:100%;"',
+        f'style="height:{height}px; width:100%; max-width:{width}px;"',
+    )
+    html = html.replace(
+        "html, body {height: 100%;}",
+        "html, body {height: auto; margin: 0; padding: 0; background: #F7F9FC; overflow-x: auto;}",
+    )
+    html = html.replace('"responsive": true', '"responsive": false')
+    html = html.replace('"responsive":true', '"responsive":false')
+    html = re.sub(
+        r'<div style="height:\d+px; width:\d+px;">',
+        f'<div style="height:{height}px; width:100%; max-width:{width}px; margin:0 auto;">',
+        html,
+    )
+    if "Cache-Control" not in html:
+        html = html.replace(
+            "<head>",
+            '<head>\n  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />',
+            1,
+        )
+    path.write_text(html, encoding="utf-8")
+
+
 def save(fig: go.Figure, name: str, **theme_kw) -> None:
     apply_theme(fig, **theme_kw)
     h = theme_kw.get("height", 760)
     w = theme_kw.get("width", 1280)
     for html_dir in (OUT_DIR, DOCS_CHARTS):
-        fig.write_html(str(html_dir / f"{name}.html"), include_plotlyjs="cdn")
+        export_plotly_html(fig, html_dir / f"{name}.html")
     png_path = OUT_DIR / f"{name}.png"
     asset_png = DOCS_ASSETS / f"{name}.png"
     try:
@@ -524,13 +562,14 @@ def build_github_pages_index(summary: dict) -> None:
           <div class="panel-head">
             <h2>{title}</h2>
             <p>{desc}</p>
-            <a class="open-chart" href="charts/{slug}.html" target="_blank" rel="noopener">Open full screen</a>
+            <a class="open-chart" href="charts/{slug}.html?v={SITE_VERSION}" target="_blank" rel="noopener">Open full screen</a>
           </div>
           <iframe
             class="chart-frame"
             title="{title}"
-            src="charts/{slug}.html"
+            src="charts/{slug}.html?v={SITE_VERSION}"
             loading="lazy"
+            scrolling="no"
             height="{height}"
           ></iframe>
         </section>"""
@@ -542,6 +581,7 @@ def build_github_pages_index(summary: dict) -> None:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <title>PolyETL · Polymarket analytics dashboard</title>
   <meta name="description" content="Interactive Polymarket category analytics built with the PolyETL pipeline." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>" />
@@ -644,7 +684,18 @@ def build_github_pages_index(summary: dict) -> None:
       border: 0;
       display: block;
       background: #fff;
+      overflow: hidden;
     }}
+    .cache-note {{
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin: 0 0 1rem;
+      padding: 0.65rem 0.9rem;
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-radius: 8px;
+    }}
+    .cache-note a {{ color: var(--accent); }}
     footer {{
       margin-top: 2rem;
       text-align: center;
@@ -677,6 +728,13 @@ def build_github_pages_index(summary: dict) -> None:
       <div class="kpi"><label>Top category</label><strong>{summary["top_cat"]}</strong></div>
       <div class="kpi"><label>Top category share</label><strong>{fmt_pct(summary["top_vol_share"])}</strong></div>
     </div>
+
+    <p class="cache-note">
+      Dashboard build <strong>{SITE_VERSION}</strong>.
+      If charts look stacked or show an old donut layout, hard-refresh
+      (<kbd>Ctrl+Shift+R</kbd>) or open the
+      <a href="charts/00_linkedin_hero_dashboard.html?v={SITE_VERSION}">executive chart directly</a>.
+    </p>
 
     <nav class="toc" aria-label="Chart sections">
       <a href="#00_linkedin_hero_dashboard">Overview</a>
@@ -1015,7 +1073,7 @@ fig5 = build_hero_dashboard(cat_all, summary, colors, is_aggregated)
 hero_name = "00_linkedin_hero_dashboard"
 png_hero = OUT_DIR / f"{hero_name}.png"
 for html_dir in (OUT_DIR, DOCS_CHARTS):
-    fig5.write_html(str(html_dir / f"{hero_name}.html"), include_plotlyjs="cdn")
+    export_plotly_html(fig5, html_dir / f"{hero_name}.html")
 try:
     fig5.write_image(str(png_hero), width=1280, height=1080, scale=2)
 except OSError:
